@@ -1,0 +1,6 @@
+name: mihaji
+version: 1.0.0
+description: "Mihaji Memory — ChromaDB 向量记忆插件，中日英多语言语义搜索，带重叠分片的自动记忆管理。"
+hooks:
+  - sync_turn
+  - on_session_end
