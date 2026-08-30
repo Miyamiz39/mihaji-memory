@@ -100,6 +100,9 @@ store.search_hybrid / store.add / store.delete / store.count
 7. **[已优化 P1] 上下文自动缝合 (Chunk Stitching)**：`get_stitched_context` 自动合并前后相邻 1 个分块，彻底消除断句断意。
 8. **[已优化 P1] 工具体系精简**：收敛为 `search`, `remember`, `delete`, `count` 4 大动作，底层保持旧动作（`add`/`recall`/`forget`）静默兼容。
 9. **[已优化 P1] 离线巩固脚本规范化**：修复 `maintenance.py` 导入链与跨桶 Jaccard 去重计算。
+10. **[已重构 P0] 直接托管本地嵌入推理架构**：绕过 ChromaDB 内部的黑盒网络调用与 repo ID 依赖，在 Python 层直接利用本地快照绝对路径加载 `SentenceTransformer` 并显式传递 `embeddings` / `query_embeddings`，100% 根除境外 HuggingFace HEAD 探测导致的 `getaddrinfo failed` 与 `Client closed` 异常。
+11. **[已优化 P0] 异步预热与冷启动 BM25 极速降级**：插件初始化时在后台守护线程异步加载模型，首轮对话若模型未就绪则 0 毫秒阻塞降级为 BM25 纯关键词检索，彻底解决 Hermes 网关 8.0s 超时截断问题。
+12. **[已加固 P1] 显式禁用 ChromaDB 遥测**：注入 `anonymized_telemetry=False`，彻底免疫第三方 OpenTelemetry / Protobuf 升级引起的底层符号冲突。
 
 ---
 

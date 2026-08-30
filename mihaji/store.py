@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime
 from pathlib import Path
@@ -30,6 +31,8 @@ except ImportError:
     # When run directly as a script or test
     from hybrid_search import BM25Index, build_index_from_collection, rrf_fuse, weighted_sample  # type: ignore[no-redef]
 
+from sentence_transformers import SentenceTransformer
+
 logger = logging.getLogger(__name__)
 
 # Default model — lightweight multilingual, auto-downloaded by sentence-transformers
@@ -44,6 +47,25 @@ COLLECTION_NAME = "mihaji_multilingual_memory"
 # How many extra candidates to pull from each leg for fusion
 HYBRID_VECTOR_CANDIDATES = 20  # Fetch 20 from vector to give BM25 room to boost
 HYBRID_BM25_CANDIDATES = 20
+
+
+def _resolve_model_path(model_name: str) -> tuple[str, bool]:
+    """Resolve model_name to local snapshot directory if cached, returning (resolved_path, is_local)."""
+    p = Path(model_name)
+    if p.exists() and p.is_dir():
+        return str(p), True
+
+    # Check ~/.cache/huggingface/hub/models--...
+    hub_name = "models--" + model_name.replace("/", "--")
+    if not hub_name.startswith("models--sentence-transformers--") and "/" not in model_name:
+        hub_name = "models--sentence-transformers--" + model_name
+
+    snapshots = Path.home() / ".cache" / "huggingface" / "hub" / hub_name / "snapshots"
+    if snapshots.exists():
+        for snap in snapshots.iterdir():
+            if snap.is_dir() and ((snap / "config.json").exists() or (snap / "model.safetensors").exists()):
+                return str(snap), True
+    return model_name, False
 
 
 class MihajiStore:
@@ -62,46 +84,79 @@ class MihajiStore:
         self._db_path = Path(db_path)
         self._db_path.mkdir(parents=True, exist_ok=True)
         self._model_name = model_name
-        self._embedding_fn = None  # Lazy-loaded on first use
+        self._model: Optional[SentenceTransformer] = None
+        self._model_loading = False
+        self._model_lock = threading.Lock()
         self._bm25: Optional[BM25Index] = None  # Lazy-built on first hybrid search
 
-        self._client = chromadb.PersistentClient(path=str(self._db_path))
+        # Disable ChromaDB telemetry to prevent any OpenTelemetry collision
+        chroma_settings = chromadb.Settings(anonymized_telemetry=False)
+        self._client = chromadb.PersistentClient(path=str(self._db_path), settings=chroma_settings)
         self._bm25_cache_file = self._db_path / "bm25_cache.json"
-        # Create collection without embedding function — we set it lazily
-        # to avoid the ~15s sentence-transformers model load at startup.
         self._collection = self._client.get_or_create_collection(
             name=COLLECTION_NAME,
         )
 
+        # Trigger non-blocking background model warmup
+        self.warmup()
+
     # ------------------------------------------------------------------
-    # Embedding (lazy)
+    # Embedding (background warmup & lazy fallback)
     # ------------------------------------------------------------------
 
-    def _get_embedding_fn(self):
-        """Lazy-load the sentence-transformers model.
+    def warmup(self) -> None:
+        """Start non-blocking background model loading thread."""
+        if self._model is not None or self._model_loading:
+            return
+        t = threading.Thread(target=self._load_model_worker, daemon=True, name="mihaji-warmup")
+        t.start()
 
-        The first call loads the model (~15s for 199-layer multilingual),
-        subsequent calls are instant. Called automatically by add/search.
-        """
-        if self._embedding_fn is None:
-            logger.info("Mihaji: loading embedding model '%s'...", self._model_name)
-            # Try offline mode first (fast, skips remote update check)
-            os.environ.setdefault("HF_HUB_OFFLINE", "1")
-            os.environ.setdefault("TRANSFORMERS_OFFLINE", "1")
+    def is_model_ready(self) -> bool:
+        """Check if embedding model is loaded and ready."""
+        return self._model is not None
+
+    def _load_model_worker(self) -> None:
+        """Worker thread to load sentence-transformers model directly from local files."""
+        with self._model_lock:
+            if self._model is not None:
+                return
+            self._model_loading = True
             try:
-                self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=self._model_name,
-                )
+                os.environ.setdefault("HF_ENDPOINT", "https://hf-mirror.com")
+                model_path, is_local = _resolve_model_path(self._model_name)
+                logger.info("Mihaji: loading embedding model from '%s' (is_local=%s)...", model_path, is_local)
+
+                if is_local:
+                    os.environ["HF_HUB_OFFLINE"] = "1"
+                    os.environ["TRANSFORMERS_OFFLINE"] = "1"
+                    self._model = SentenceTransformer(
+                        model_path,
+                        local_files_only=True,
+                    )
+                else:
+                    # Online mirror fallback
+                    os.environ.pop("HF_HUB_OFFLINE", None)
+                    os.environ.pop("TRANSFORMERS_OFFLINE", None)
+                    self._model = SentenceTransformer(
+                        model_path,
+                    )
+                logger.info("Mihaji: embedding model loaded and ready")
             except Exception as e:
-                logger.info("Offline model load failed (%s); attempting download with online mode enabled...", e)
-                os.environ.pop("HF_HUB_OFFLINE", None)
-                os.environ.pop("TRANSFORMERS_OFFLINE", None)
-                self._embedding_fn = embedding_functions.SentenceTransformerEmbeddingFunction(
-                    model_name=self._model_name,
-                )
-            self._collection.embedding_function = self._embedding_fn
-            logger.info("Mihaji: embedding model loaded")
-        return self._embedding_fn
+                logger.error("Mihaji: failed to load embedding model: %s", e)
+            finally:
+                self._model_loading = False
+
+    def _encode(self, texts: List[str], block: bool = True) -> Optional[List[List[float]]]:
+        """Encode texts into embedding vectors directly via SentenceTransformer."""
+        if self._model is None:
+            if block:
+                self._load_model_worker()
+            else:
+                return None
+        if self._model is None:
+            return None
+        embeddings = self._model.encode(texts, show_progress_bar=False, normalize_embeddings=False)
+        return embeddings.tolist()
 
     # ------------------------------------------------------------------
     # BM25 index (cached + incremental)
@@ -188,11 +243,21 @@ class MihajiStore:
                 )
                 metadatas.append(meta)
 
-            self._collection.add(
-                documents=documents,
-                ids=ids,
-                metadatas=metadatas,
-            )
+            # Compute embeddings directly via local SentenceTransformer model
+            embs = self._encode(documents, block=True)
+            if embs:
+                self._collection.add(
+                    embeddings=embs,
+                    documents=documents,
+                    ids=ids,
+                    metadatas=metadatas,
+                )
+            else:
+                self._collection.add(
+                    documents=documents,
+                    ids=ids,
+                    metadatas=metadatas,
+                )
 
             # Incrementally update BM25 index and disk cache if already loaded
             if self._bm25 is not None and not self._bm25.needs_rebuild:
@@ -217,12 +282,18 @@ class MihajiStore:
 
         Returns a list of dicts with: content, created_at, chunk_idx, total_chunks, group_id.
         """
-        self._get_embedding_fn()  # Lazy-load model on first use
         try:
-            results = self._collection.query(
-                query_texts=[query],
-                n_results=n_results,
-            )
+            q_emb = self._encode([query], block=True)
+            if q_emb:
+                results = self._collection.query(
+                    query_embeddings=q_emb,
+                    n_results=n_results,
+                )
+            else:
+                results = self._collection.query(
+                    query_texts=[query],
+                    n_results=n_results,
+                )
 
             documents: List[str] = results["documents"][0]
             metas: List[Dict[str, Any]] = results["metadatas"][0]
@@ -261,33 +332,38 @@ class MihajiStore:
         {content, created_at, chunk_idx, total_chunks, group_id} + rrf_score.
 
         Graceful degradation:
-          - Vector unavailable → pure BM25 results
+          - Vector still warming up / unavailable → instant pure BM25 results (<2ms)
           - BM25 unavailable → pure vector results
         """
-        self._get_embedding_fn()
-
-        # -- Leg 1: Vector search (pull extra candidates) --
+        # -- Leg 1: Vector search (pull extra candidates if model is ready) --
         vector_results: List[Dict[str, Any]] = []
-        try:
-            raw = self._collection.query(
-                query_texts=[query],
-                n_results=HYBRID_VECTOR_CANDIDATES,
-            )
-            docs: List[str] = raw["documents"][0]
-            metas: List[Dict[str, Any]] = raw["metadatas"][0]
-            for doc, meta in zip(docs, metas):
-                vector_results.append({
-                    "content": doc,
-                    "created_at": meta.get("created_at", ""),
-                    "chunk_idx": meta.get("chunk_idx", 0),
-                    "total_chunks": meta.get("total_chunks", 1),
-                    "group_id": meta.get("group_id", ""),
-                    "strength": meta.get("strength", 50),
-                    "memory_type": meta.get("memory_type", "general"),
-                    "tags": _parse_tags(meta.get("tags", "")),
-                })
-        except Exception as e:
-            logger.debug("Vector search failed (BM25 will cover): %s", e)
+        if self.is_model_ready():
+            try:
+                q_emb = self._encode([query], block=False)
+                if q_emb:
+                    raw = self._collection.query(
+                        query_embeddings=q_emb,
+                        n_results=HYBRID_VECTOR_CANDIDATES,
+                    )
+                    docs: List[str] = raw["documents"][0]
+                    metas: List[Dict[str, Any]] = raw["metadatas"][0]
+                    for doc, meta in zip(docs, metas):
+                        vector_results.append({
+                            "content": doc,
+                            "created_at": meta.get("created_at", ""),
+                            "chunk_idx": meta.get("chunk_idx", 0),
+                            "total_chunks": meta.get("total_chunks", 1),
+                            "group_id": meta.get("group_id", ""),
+                            "strength": meta.get("strength", 50),
+                            "memory_type": meta.get("memory_type", "general"),
+                            "tags": _parse_tags(meta.get("tags", "")),
+                        })
+            except Exception as e:
+                logger.debug("Vector search failed (BM25 will cover): %s", e)
+        else:
+            # Trigger background warmup if not started yet; do not block this prefetch turn
+            self.warmup()
+            logger.debug("Mihaji: vector model warming up in background; serving instant BM25 leg")
 
         # -- Leg 2: BM25 keyword search --
         bm25_results: List[Dict[str, Any]] = []

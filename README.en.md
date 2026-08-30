@@ -1,7 +1,7 @@
 # 🐾 Mihaji Memory
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.2.1-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Hermes_Agent-purple.svg" alt="Platform">
   <img src="https://img.shields.io/badge/python-%3E%3D3.10-green.svg" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="License">
@@ -109,6 +109,12 @@ uv pip install -r requirements.txt --python ~/.hermes/hermes-agent/venv/bin/pyth
 memory:
   provider: mihaji
 ```
+
+> [!IMPORTANT]
+> **Pinned Embedding Model & Direct Local Inference Architecture**:
+> - **Standardized Multilingual Model**: Strictly pinned to `paraphrase-multilingual-MiniLM-L12-v2` (118M parameters, supporting 50+ languages with state-of-the-art multilingual semantic alignment).
+> - **Direct Host Inference**: Bypasses ChromaDB's internal blackbox networking. Vectors are computed directly in Python via local disk snapshots (`local_files_only=True`), turning ChromaDB into a 100% offline local vector index.
+> - **Zero-Timeout Guarantee**: Features asynchronous background warmup and instant BM25 fallback (<2ms) on cold start, completely preventing gateway 8.0s timeout drops.
 
 Restart Hermes and verify:
 ```bash

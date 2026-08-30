@@ -1,5 +1,5 @@
 name: mihaji
-version: 1.2.0
+version: 1.2.1
 description: "Mihaji Memory — ChromaDB 向量记忆 + BM25 关键词混合检索，RRF 融合排序。中日英多语言语义搜索，带重叠分片的自动记忆管理。"
 hooks:
   - sync_turn

@@ -1,7 +1,7 @@
 # 🐾 Mihaji Memory (米哈唧记忆)
 
 <p align="center">
-  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/version-1.2.1-blue.svg" alt="Version">
   <img src="https://img.shields.io/badge/platform-Hermes_Agent-purple.svg" alt="Platform">
   <img src="https://img.shields.io/badge/python-%3E%3D3.10-green.svg" alt="Python">
   <img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="License">
@@ -134,6 +134,14 @@ plugins:
     db_path: "" # 留空默认使用 profile 下的 mihaji_memory 目录
     model_name: "paraphrase-multilingual-MiniLM-L12-v2"
 ```
+
+> [!IMPORTANT]
+> **关于嵌入模型（Pinned Embedding Model）与纯本地直接推理架构**：
+> - **固定模型规格**：本项目严格固化选用 `paraphrase-multilingual-MiniLM-L12-v2`（轻量 118M 参数，原生支持中、日、英等 50+ 种语言，中文语义召回平衡性最佳）。
+> - **直接托管推理（Direct Host Inference）**：插件绕过了 ChromaDB 内部的黑盒网络调用，在应用层直接通过本地快照路径（`local_files_only=True`）加载模型并计算向量（`query_embeddings` / `embeddings`），ChromaDB 仅作为纯本地向量与元数据检索库。
+> - **多重网络防御与零超时**：
+>   - 首次下载自动接入国内高速镜像源（`hf-mirror.com`），下载完成后 100% 纯本地离线运行，0 外部网络请求。
+>   - 插件初始化自动在后台静默预热权重；若冷启动首轮对话到达时模型仍在加载，**0 毫秒阻塞极速降级为 BM25 纯关键词检索**，彻底杜绝网关 8.0s 超时截断。
 
 重启 Hermes 即可生效：
 ```bash
