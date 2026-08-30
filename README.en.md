@@ -1,4 +1,4 @@
-﻿# 🐾 Mihaji Memory
+# 🐾 Mihaji Memory
 
 <p align="center">
   <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
@@ -23,14 +23,14 @@
 - 🧠 **Dual-Track Hybrid Search (Vector + BM25 + RRF)**:
   Combines **ChromaDB dense multilingual embeddings** (semantic recall) with **Jieba BM25 sparse keywords** (exact entity matching), unified via **Reciprocal Rank Fusion (RRF)**.
 - ⚡ **Two-Pass Prefetch & A-Res Weighted Recall**:
-  Automatically injects context before each turn: **Top-3 relevant + Top-2 strength-weighted recall (A-Res algorithm with ^2$ bias)**, balancing precision and serendipity.
+  Automatically injects context before each turn: **Top-3 relevant + Top-2 strength-weighted recall (A-Res algorithm with w² bias)**, balancing precision and serendipity.
 - 🧵 **Automatic Context Chunk Stitching**:
-  When multi-chunk documents are matched, neighboring chunks (chunk_idx ± 1) are seamlessly stitched together, avoiding fragmented sentences.
+  When multi-chunk documents are matched, neighboring chunks (`chunk_idx ± 1`) are seamlessly stitched together, avoiding fragmented sentences.
 - 🚀 **BM25 Disk Caching & Incremental Updates**:
-  Tokenized indices are persisted to m25_cache.json. New memories are incrementally appended without blocking user interactions.
+  Tokenized indices are persisted to `bm25_cache.json`. New memories are incrementally appended without blocking user interactions.
 - 🧹 **Active Memory Management & Offline Consolidation**:
-  - mihaji_memory tool: emember, search, delete, and count.
-  - Offline maintenance.py script: noise filtering, cross-bucket Jaccard deduplication, and JSON backups.
+  - `mihaji_memory` tool: `remember`, `search`, `delete`, and `count`.
+  - Offline `maintenance.py` script: noise filtering, cross-bucket Jaccard deduplication, and JSON backups.
 - 🛡️ **Opinionated Zero-Config**:
   Well-balanced defaults built-in. No complex parameter tuning needed.
 
@@ -38,7 +38,7 @@
 
 ## 🏗️ Architecture & Data Flow
 
-`mermaid
+```mermaid
 flowchart TB
     subgraph AgentLoop ["🤖 Hermes Agent Loop"]
         direction TB
@@ -67,18 +67,18 @@ flowchart TB
         Assistant -->|"after turn"| SyncTurn
         SyncTurn --> Chunker --> DB & BM25Cache
     end
-`
+```
 
 ---
 
-## 🛠️ Tool Usage (mihaji_memory)
+## 🛠️ Tool Usage (`mihaji_memory`)
 
 | Action | Description | Parameters | Use Case |
 |:---|:---|:---|:---|
-| **search** | Search memory | query, limit (default 5) | *"Find notes about mango sticky rice"* |
-| **emember** | Store important facts | 	ext, strength (1-100), memory_type, 	ags | *"Remember user moved to Shanghai"* |
-| **delete** | Delete outdated memories | query, doc_id, or group_id | *"Remove memory about old address"* |
-| **count** | Count stored chunks | none | Check total memory items |
+| **`search`** | Search memory | `query`, `limit` (default 5) | *"Find notes about mango sticky rice"* |
+| **`remember`** | Store important facts | `text`, `strength` (1-100), `memory_type`, `tags` | *"Remember user moved to Shanghai"* |
+| **`delete`** | Delete outdated memories | `query`, `doc_id`, or `group_id` | *"Remove memory about old address"* |
+| **`count`** | Count stored chunks | none | Check total memory items |
 
 ---
 
@@ -86,34 +86,34 @@ flowchart TB
 
 ### 1. Clone the repository
 
-`ash
+```bash
 git clone https://github.com/Miyamiz39/mihaji-memory.git
 cd mihaji-memory
-`
+```
 
 ### 2. Symlink to Hermes plugins
 
-`ash
-ln -s C:\Users\miyaizu\Desktop\mihaji-work/mihaji ~/.hermes/plugins/mihaji
-`
+```bash
+ln -s $(pwd)/mihaji ~/.hermes/plugins/mihaji
+```
 
 ### 3. Install dependencies
 
-`ash
+```bash
 uv pip install -r requirements.txt --python ~/.hermes/hermes-agent/venv/bin/python3
-`
+```
 
 ### 4. Activate in config.yaml
 
-`yaml
+```yaml
 memory:
   provider: mihaji
-`
+```
 
 Restart Hermes and verify:
-`ash
+```bash
 hermes memory status
-`
+```
 
 ---
 
