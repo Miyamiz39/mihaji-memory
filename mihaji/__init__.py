@@ -31,32 +31,45 @@ logger = logging.getLogger(__name__)
 MIHAJI_MEMORY_SCHEMA = {
     "name": "mihaji_memory",
     "description": (
-        "语义记忆库 — 用向量搜索找回过去的对话和约定。\n"
+        "语义记忆库 — 混合检索（语义+关键词）找回过去的对话和约定，或存储长期偏好。\n"
         "ACTIONS:\n"
-        "• search — 根据关键词或语义搜索过往记忆，返回相关片段。\n"
-        "• add — 手动添加一段记忆（对话自动记录，这个用于补充细节）。\n"
+        "• search — 根据关键词或语义混合搜索过往记忆，返回最相关片段。\n"
+        "• remember — 主动存储一条重要记忆，可指定强度、类型和标签。\n"
+        "• delete — 删除记忆（指定查询关键词或条目 ID 进行清理）。\n"
         "• count — 查看记忆库总条目数。\n"
         "\n"
-        "重要: 每次回复前先用 search 查一下有没有相关记忆！"
+        "重要: 每次回复前系统会自动注入相关回忆，必要时可用 search 补充查询！"
     ),
     "parameters": {
         "type": "object",
         "properties": {
             "action": {
                 "type": "string",
-                "enum": ["search", "add", "count"],
+                "enum": ["search", "remember", "delete", "count"],
             },
             "query": {
                 "type": "string",
-                "description": "搜索关键词或语义查询（action='search' 时必填）",
+                "description": "搜索关键词或待删除的记忆内容（action='search' 或 'delete' 时使用）",
             },
             "text": {
                 "type": "string",
-                "description": "要手动添加的记忆内容（action='add' 时必填）",
+                "description": "记忆内容（action='remember' 时必填）",
             },
             "limit": {
                 "type": "integer",
-                "description": "返回结果数量（默认 5）",
+                "description": "返回结果数量（search 默认 5）",
+            },
+            "strength": {
+                "type": "integer",
+                "description": "记忆强度 1-100，越高越重要（action='remember' 可选，默认 70）",
+            },
+            "memory_type": {
+                "type": "string",
+                "description": "记忆类型：knowledge/preference/event/task/general（action='remember' 可选，默认 general）",
+            },
+            "tags": {
+                "type": "string",
+                "description": "逗号分隔的标签文本或列表（action='remember' 可选）",
             },
         },
         "required": ["action"],
@@ -109,10 +122,13 @@ class MihajiMemoryProvider(MemoryProvider):
         return "mihaji"
 
     def is_available(self) -> bool:
-        """Check that chromadb and sentence-transformers are importable."""
+        """Check that chromadb, sentence-transformers, jieba, and rank_bm25 are importable."""
         try:
             import chromadb  # noqa: F401
             from chromadb.utils import embedding_functions  # noqa: F401
+            import jieba  # noqa: F401
+            import rank_bm25  # noqa: F401
+            import sentence_transformers  # noqa: F401
 
             return True
         except ImportError:
@@ -120,7 +136,10 @@ class MihajiMemoryProvider(MemoryProvider):
 
     def initialize(self, session_id: str, **kwargs) -> None:
         """Set up ChromaDB with persistent storage under HERMES_HOME."""
-        from .store import MihajiStore
+        try:
+            from .store import MihajiStore
+        except ImportError:  # Hermes loads user plugins as top-level module; fall back to absolute import
+            from store import MihajiStore
 
         hermes_home = kwargs.get("hermes_home", "~/.hermes")
         hermes_home = str(Path(hermes_home).expanduser())
@@ -151,31 +170,91 @@ class MihajiMemoryProvider(MemoryProvider):
         if count == 0:
             return (
                 "# Mihaji 记忆库 🐾\n"
-                "记忆库是空的哦。用 mihaji_memory(action='add') 来存重要的事，"
-                "每次回复前用 mihaji_memory(action='search') 查查有没有相关记忆。"
+                "记忆库还是空的哦。可以用 mihaji_memory 来操作：\n"
+                "  • search — 搜索相关过往记忆\n"
+                "  • remember — 学到重要事实、偏好时主动存下来\n"
+                "  • delete — 删除或遗忘错误/过时的记忆\n"
+                "  • count — 查看记忆库条目数"
             )
         return (
             f"# Mihaji 记忆库 🐾\n"
-            f"已存 {count} 条记忆片段。用 mihaji_memory(action='search') "
-            f"搜索过往，用 mihaji_memory(action='add') 手动添加。"
+            f"已存 {count} 条记忆片段。\n\n"
+            f"### 操作说明\n"
+            f"`mihaji_memory(action='search', query='...')` — 搜索相关记忆。\n"
+            f"`mihaji_memory(action='remember', text='...', strength=70, memory_type='knowledge', tags='标签1,标签2')` — 记录重要信息。\n"
+            f"`mihaji_memory(action='delete', query='...')` — 删除或遗忘指定记忆。\n"
+            f"`mihaji_memory(action='count')` — 查看记忆库条目数。\n\n"
+            f"### 主动记忆场景\n"
+            f"**什么时候该 remember？**\n"
+            f"  • 用户说出了重要的个人信息（职业、学校、城市、联系方式）\n"
+            f"  • 用户表达了明确的偏好（喜欢什么、讨厌什么、习惯什么）\n"
+            f"  • 用户纠正了你（别忘了这个，下次要记住）\n"
+            f"  • 你和用户共同做了决定（选定了某个方案、工具、方向）\n"
+            f"  • 用户交代了需要长期记住的约定或规则\n\n"
+            f"**记忆属性：**\n"
+            f"  • strength: 1-100，越高越重要（默认70，极重要的给90+）\n"
+            f"  • memory_type: knowledge / preference / event / task / general\n"
+            f"  • tags: 逗号分隔的关键词标签（或列表）\n\n"
+            f"**自动机制：**\n"
+            f"  • 每轮对话前会自动根据当前话题召回最相关的记忆片段注入提示词，并缝合前后上下文保证完整语义。"
         )
 
     # -- Prefetch -------------------------------------------------------------
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        """Semantic recall before each turn. Returns formatted memories or ''."""
+        """Two-pass prefetch: relevance top-3 + strength-weighted top-2.
+
+        Pass 1: search_hybrid — 一次性检索候选池（含向量与 BM25 RRF 融合）
+        Pass 2: 前 3 条精准命中 + 剩余池中按 strength² 加权抽 2 条
+        合并去重 + 前后 chunk 上下文缝合 → top-5 注入提示词
+        """
         if not self._store or not query:
             return ""
         try:
-            results = self._store.search(query, n_results=5)
-            if not results:
+            candidates = self._store.search_hybrid(query, n_results=10)
+            if not candidates:
+                return ""
+
+            top_relevant = candidates[:3]
+            remaining_pool = candidates[3:]
+
+            if remaining_pool:
+                try:
+                    from .hybrid_search import weighted_sample
+                except ImportError:
+                    from hybrid_search import weighted_sample
+                top_weighted = weighted_sample(remaining_pool, n=2, strength_key="strength")
+            else:
+                top_weighted = []
+
+            # Merge: key by group_id+chunk_idx, keep order (relevance first)
+            seen: set = set()
+            merged: list = []
+            for item in top_relevant + top_weighted:
+                gid = item.get("group_id", "")
+                cidx = item.get("chunk_idx", 0)
+                key = f"{gid}_{cidx}" if gid else item.get("content", "")
+                if key not in seen:
+                    seen.add(key)
+                    merged.append(item)
+
+            if not merged:
                 return ""
 
             lines = ["## 相关回忆 🐾"]
-            for r in results:
-                lines.append(
-                    f"- [{r['created_at']}] {r['content']}"
+            for r in merged[:5]:
+                created_at = r.get("created_at", "")
+                # Seamlessly stitch surrounding chunk_idx - 1 and chunk_idx + 1 if available
+                content = self._store.get_stitched_context(
+                    group_id=r.get("group_id", ""),
+                    chunk_idx=r.get("chunk_idx", 0),
+                    total_chunks=r.get("total_chunks", 1),
+                    fallback_content=r.get("content", ""),
                 )
+                if created_at:
+                    lines.append(f"- [{created_at}] {content}")
+                else:
+                    lines.append(f"- {content}")
             return "\n".join(lines)
         except Exception as e:
             logger.debug("Mihaji prefetch failed: %s", e)
@@ -211,10 +290,14 @@ class MihajiMemoryProvider(MemoryProvider):
             logger.debug("Mihaji: skipped background review prompt")
             return
         try:
-            n = self._store.add(stripped)
-            logger.debug("Mihaji: auto-stored %d chunks", n)
+            n = self._store.add(stripped, strength=20, memory_type="general")
+            logger.debug("Mihaji: auto-stored %d chunks (strength=20)", n)
         except Exception as e:
             logger.debug("Mihaji sync_turn failed: %s", e)
+
+    def on_session_end(self, session_id: str = "", **kwargs) -> None:
+        """Hook called when a session ends."""
+        logger.debug("Mihaji: session %s ended", session_id)
 
     # -- Tools ----------------------------------------------------------------
 
@@ -237,7 +320,7 @@ class MihajiMemoryProvider(MemoryProvider):
                 if not query:
                     return tool_error("search 需要 'query' 参数")
                 limit = int(args.get("limit", 5))
-                results = self._store.search(query, n_results=limit)
+                results = self._store.search_hybrid(query, n_results=limit)
                 if not results:
                     return json.dumps(
                         {"results": [], "count": 0, "hint": "没找到相关记忆"},
@@ -248,11 +331,69 @@ class MihajiMemoryProvider(MemoryProvider):
                     ensure_ascii=False,
                 )
 
+            elif action == "recall":
+                query = args.get("query", "")
+                if not query:
+                    return tool_error("recall 需要 'query' 参数")
+                limit = int(args.get("limit", 5))
+                results = self._store.recall(query, n_results=limit)
+                if not results:
+                    return json.dumps(
+                        {"results": [], "count": 0, "hint": "没找到相关记忆"},
+                        ensure_ascii=False,
+                    )
+                return json.dumps(
+                    {"results": results, "count": len(results)},
+                    ensure_ascii=False,
+                )
+
+            elif action in ("delete", "forget"):
+                query = args.get("query", "")
+                doc_id = args.get("doc_id", "")
+                group_id = args.get("group_id", "")
+                if not query and not doc_id and not group_id:
+                    return tool_error("delete 需要 'query'、'doc_id' 或 'group_id' 参数")
+                doc_ids = [doc_id] if doc_id else None
+                deleted = self._store.delete(query=query, doc_ids=doc_ids, group_id=group_id)
+                return json.dumps(
+                    {"status": "deleted", "deleted_chunks": deleted, "query": query},
+                    ensure_ascii=False,
+                )
+
+            elif action == "remember":
+                text = args.get("text", "")
+                if not text:
+                    return tool_error("remember 需要 'text' 参数")
+                strength = int(args.get("strength", 70))
+                memory_type = args.get("memory_type") or args.get("type", "general")
+                tags_raw = args.get("tags", "")
+                if isinstance(tags_raw, list):
+                    tags = [str(t).strip() for t in tags_raw if str(t).strip()]
+                elif isinstance(tags_raw, str):
+                    tags = [t.strip() for t in tags_raw.split(",") if t.strip()] if tags_raw else []
+                else:
+                    tags = []
+                # Clamp strength
+                strength = max(1, min(100, strength))
+                n = self._store.add(text, strength=strength, memory_type=memory_type, tags=tags)
+                return json.dumps(
+                    {
+                        "status": "remembered",
+                        "chunks": n,
+                        "strength": strength,
+                        "type": memory_type,
+                        "memory_type": memory_type,
+                        "tags": tags,
+                    },
+                    ensure_ascii=False,
+                )
+
             elif action == "add":
+                # Backward-compatibility alias -> remember
                 text = args.get("text", "")
                 if not text:
                     return tool_error("add 需要 'text' 参数")
-                n = self._store.add(text)
+                n = self._store.add(text, strength=50, memory_type="general")
                 return json.dumps(
                     {"status": "added", "chunks": n},
                     ensure_ascii=False,

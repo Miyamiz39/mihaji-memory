@@ -1,211 +1,128 @@
-# 🐾 mihaji-memory
+# Mihaji Memory 改进工作区
 
-**ChromaDB-backed multilingual semantic memory plugin for [Hermes Agent](https://hermes-agent.nousresearch.com).**
-
-一个轻量、本地、多语言的语义记忆插件。自动记录对话、实时语义检索、零网络依赖。
-
-> Built with Hermes by Miyamiz
-
-🇨🇳 中文 ｜ [🇺🇸 English](README.en.md)
+从 Hermes 当前激活的 `mihaji` 插件复制而来的**改进工作副本**。
+原版位置：`~/AppData/Local/hermes/profiles/hina/plugins/mihaji/`
 
 ---
 
-### 这是什么？
+## ⚠️ 这是工作副本，不是活跃插件
 
-mihaji-memory 是一个手搓的 **Hermes Agent 专用的 MemoryProvider 插件**，用 ChromaDB 做向量存储、sentence-transformers 做多语言语义搜索。
+Hermes 加载的是**原版路径**下的插件。本目录改动**不会**自动生效。
 
-与普通的 MCP-based 记忆工具不同，它通过 Hermes 的 `system_prompt_block()` 机制，**在每轮对话开始前自动检索相关记忆并注入到系统提示中**——你不需要手动调用任何搜索工具，记忆自然出现在 Agent 的眼前。
-
-### 核心优势
-
-| 特性 | mihaji-memory | MCP-based 记忆 |
-|------|:-------------:|:--------------:|
-| 系统提示强制检索 | ✅ 自动注入 | ❌ 需要手动调工具 |
-| 自动记录对话 | ✅ sync_turn 钩子 | ❌ 需要手动 |
-| 语义搜索（中日英） | ✅ multilingual | ✅ |
-| 本地运行 | ✅ ChromaDB | ✅ |
-| 部署复杂度 | ⚡ 软链 + 装依赖 | 🐌 需要额外进程 |
-
-### 提供的能力
-
-安装激活后，mihaji 会为 Hermes Agent 提供以下能力：
-
-| 能力 | 机制 | 触发方式 |
-|:--|:--|:--|
-| 语义记忆检索 | `prefetch()` 自动将相关记忆注入系统提示 | 自动 —— 每轮对话前 |
-| 手动搜索/添加 | `mihaji_memory` 工具（search / add / count） | 手动 —— Agent 可通过 tool call 调用 |
-| 对话自动记录 | `sync_turn` 钩子将用户消息存入 ChromaDB | 自动 —— 每轮对话后 |
-
-简单来说，用户和 Agent 正常聊天就好——记忆的存取都是自动的。Agent 也可以在需要时手动调 `mihaji_memory` 工具来搜索特定内容或手动添加关键信息。
-
-### 安装
-
-#### 1. 克隆仓库
-
-```bash
-git clone https://github.com/Miyamiz39/mihaji-memory.git
-cd mihaji-memory
-```
-
-#### 2. 放入 Hermes 插件目录
-
-```bash
-ln -s $(pwd)/mihaji ~/.hermes/hermes-agent/plugins/memory/mihaji
-```
-
-#### 3. 安装依赖（推荐 `uv`）
-
-```bash
-#    需要：chromadb + sentence-transformers
-uv pip install chromadb sentence-transformers \
-  --python ~/.hermes/hermes-agent/venv/bin/python3
-```
-
-#### 4. 激活插件
-
-##### a. (推荐)交互式配置
-
-```bash
-hermes memory setup
-```
-进入 Hermes 自带的 Memory 交互式配置界面，选择 `mihaji`，按提示配置 db_path 和 model_name。
-
-##### b. 手动配置 —— 在 ~/.hermes/config.yaml 中添加：
-
-```yaml
-memory:
-  provider: mihaji
-
-#    可选配置（留空则用上面的默认值）：
-plugins:
-  mihaji: 
-    db_path: ...
-    model_name: ...
-```
-
-#### 5. 重启 gateway
-
-```bash
-hermes gateway restart
-```
-
->
-> 第 3 步也可以用 pip：`pip install chromadb sentence-transformers`，但请确保装到 Hermes 的 venv 里。
-> 第 4 步只需一行 `memory.provider: mihaji`，db_path 和 model_name 留空则自动使用默认值：
-
-| 字段 | 默认值 |
-|:--|:--|
-| `db_path` | `$HERMES_HOME/mihaji_memory`（profile 感知） |
-| `model_name` | `paraphrase-multilingual-MiniLM-L12-v2` |
-
-**首次启动注意：** 加载模型需要约 10-15 秒（下载 + 加载），之后所有 sessions 共享同一份模型缓存，速度极快。
-
-### 安装后验证
-
-装完后跑以下命令确认插件状态：
-
-```bash
-hermes memory status
-```
-
-如果输出中能看到 mihaji 显示为 `✅ available`，说明插件已被 Hermes 识别。
-
-也可以跑 `hermes doctor` 来全面检查——它会检测活跃记忆提供商是否正常。
-
-### 模型选择指南
-
-所有模型均来自 [sentence-transformers](https://www.sbert.net/) 生态 + HuggingFace Hub。
-首次使用时会自动下载，之后缓存到 `~/.cache/huggingface/`。
-
-**多语言（中日英混合推荐）：**
-
-| 模型 | 大小 | 说明 |
-|------|:----:|:------|
-| `paraphrase-multilingual-MiniLM-L12-v2` | 458MB | **推荐** — 50+ 语言，中日英语义搜索的最佳平衡点 |
-| `intfloat/multilingual-e5-small` | 118MB | 轻量级多语言检索模型，速度更快 |
-| `intfloat/multilingual-e5-base` | 278MB | 精度与速度的中间选择 |
-| `intfloat/multilingual-e5-large` | 560MB | 精度最高，适合对检索质量要求苛刻的场景 |
-| `distiluse-base-multilingual-cased-v2` | 500MB | 多语言蒸馏模型，可用但稍旧 |
-
-**仅英文（更轻量）：**
-
-| 模型 | 大小 | 说明 |
-|------|:----:|:------|
-| `all-MiniLM-L6-v2` | 90MB | 极轻量，英文场景首选 |
-| `paraphrase-MiniLM-L3-v2` | 30MB | 极致轻量，资源受限环境 |
-| `all-mpnet-base-v2` | 420MB | 英文精度最高，需要英文单语场景 |
-
-> 💡 所有可用模型详见 [sentence-transformers 模型库](https://huggingface.co/models?library=sentence-transformers)，选择适合你语言场景的即可。
+任何想回原版/合并的改动，都需要手动复制回去（见底部"回退 / 合并"）。
 
 ---
 
-## 🏗️ Architecture
+## 本次改动（2026-08-30 v1.2.0）
 
-```mermaid
-flowchart TB
-    subgraph Agent["🤖 Agent Loop"]
-        direction TB
-        User["👤 User Message"]
-        Prefetch["🔍 prefetch()\\nSemantic Search"]
-        SP["📋 System Prompt\\nMemory Injection"]
-        Assistant["✨ Assistant\\nResponse"]
-        Sync["💾 sync_turn()\\nAuto Store"]
-        Store[("🗄️ Mihaji Store\\nChromaDB")]
+完成了系统性代码审查、致命缺陷修复与第二轮体验进阶优化：
 
-        User -->|"before each turn"| Prefetch
-        Prefetch -.->|"search"| Store
-        Store -.->|"relevant memories"| Prefetch
-        Prefetch -->|"inject context"| SP
-        SP --> Assistant
-        Assistant -->|"after each turn"| Sync
-        Sync -.->|"save"| Store
-    end
+| 文件 | 改动 |
+|---|---|
+| `store.py` | 修复 `recall()` strength 采样 Bug 与离线模型加载；新增 `delete()` 方法；新增 `get_stitched_context()` 上下文缝合；支持 BM25 磁盘缓存与增量追加 |
+| `hybrid_search.py` | 修复 RRF 融合元数据透传；升级 A-Res 加权采样算法；支持 `BM25Index` 增量 `add_documents` / `remove_documents` 与磁盘持久化 |
+| `__init__.py` | 精简 Tool Schema（去除 `add` / `recall` 冗余，聚焦 `search` / `remember` / `delete` / `count`）；`prefetch` 集成上下文缝合 |
+| `maintenance.py` | 修复 import 路径与跨长度桶 Jaccard 去重；增加低强度/陈旧记忆清理支持与 dry-run 仿真 |
+| `plugin.yaml` | 升级版本为 `1.2.0`，补充依赖声明与 Hooks 声明 |
+| `requirements.txt` | 运行时依赖清单（含 torch 版本与镜像提示） |
+| `AGENTS.md` | 项目交接入门 + 历史审计记录 + 修订日志 |
+
+---
+
+## 依赖清单与版本约束
+
+| 包 | 约束 | 实测版本 | 用途 |
+|---|---|---|---|
+| `chromadb` | `>=1.5.0,<2.0` | 1.5.9 | 向量数据库 + 持久化 |
+| `jieba` | `>=0.42,<1.0` | 0.42.1 | 中文分词（BM25 前置） |
+| `rank_bm25` | `>=0.2.2,<0.3` | 0.2.2 | BM25 关键词检索 |
+| `sentence-transformers` | `>=5.0,<7.0` | 6.0.0 | 多语言嵌入模型 |
+| `pyyaml` | `>=6.0` | 6.0.3 | config.yaml 解析 |
+
+> **依赖关系不可降级**：`jieba` 和 `rank_bm25` 是 `hybrid_search.py` 的核心 import，
+> 不是可选增强——混合检索（BM25+向量 RRF 融合）是 mihaji 的卖点，不是装饰品。
+
+---
+
+## 安装
+
+### 在 Hermes 已有 venv 里装（推荐）
+
+```bash
+cd ~/AppData/Local/hermes
+source venv/Scripts/activate   # Windows Git Bash
+uv pip install -r ~/Desktop/mihaji-work/requirements.txt
 ```
 
-### How It Works
+### 全新环境
 
-1. **Prefetch** — Before each response, the user's message is used to semantically search memory (via `prefetch()`).
-2. **Inject** — Matched memories are injected into the system prompt, so the agent always has context.
-3. **Auto-store** — After each turn, meaningful messages (>20 chars) are automatically chunked and stored (via `sync_turn` hook).
-4. **Tool access** — A `mihaji_memory` tool is also exposed for manual search/add/count.
-
-### Chunking Strategy
-
-Text is split into overlapping chunks (300 chars each, 50 char overlap) to preserve context across boundaries.
-
+```bash
+# 1. 装 Hermes（参照官方文档）
+# 2. 激活 venv 后执行上面那条命令
+# 3. sentence-transformers 首次会下载模型，
+#    mihaji 默认用的是 paraphrase-multilingual-MiniLM-L12-v2 (~470MB)
 ```
-"米哈唧是清华大学的学生，在五道口上学。今天聊了..."
- ┌─────────────────────────────────────────────┐
- │ Chunk 1: ...在五道口上学。今天...  300c │
- └─────────────────────────────────────────────┘
-                ┌──────────────────────────────┐
-                │ Chunk 2: 道口上学。今天聊了... 300c│  ← 50 overlap
-                └──────────────────────────────┘
+
+### torch 选 CPU 还是 GPU
+
+`sentence-transformers` 会拉 `torch>=2.2`，请按需：
+
+- **仅 CPU**：体积小，启动慢但够用
+  ```bash
+  pip install torch --index-url https://download.pytorch.org/whl/cpu
+  ```
+- **有 NVIDIA GPU**：默认 `pip install torch` 即可（CUDA 版本由 pip 自动选）
+
+---
+
+## 回退 / 合并到原版
+
+### 改坏了？回退到原版
+
+Hermes 一直在用原版，本目录改了啥都不影响线上。所以——
+
+- **"线上坏了"**：跟本目录无关，原版没动过；查 hermes 配置或依赖问题
+- **"想看本目录改得对不对"**：在本目录直接 `python -c "import chromadb, jieba, rank_bm25; print('ok')"` 验证
+
+### 改完了想合并到原版
+
+```bash
+# 1. 先停 Hermes（避免文件占用）
+# 2. 备份原版
+cp -r ~/AppData/Local/hermes/profiles/hina/plugins/mihaji \
+      ~/AppData/Local/hermes/profiles/hina/plugins/mihaji.bak.$(date +%Y%m%d)
+
+# 3. 仅复制改动过的声明文件（推荐，不要无脑覆盖整个目录）
+cp ~/Desktop/mihaji-work/plugin.yaml \
+   ~/AppData/Local/hermes/profiles/hina/plugins/mihaji/plugin.yaml
+
+# 4. requirements.txt 不用合并——它是给人类看的，原版 plugin 目录不需要它
+#    （如果想保留，复制过去也行，无副作用）
+
+# 5. 重启 Hermes
 ```
 
 ---
 
-## 📦 Project Structure
+## 工作流建议
 
-```
-mihaji-memory/
-├── README.md               # This file
-├── README.en.md            # English version
-├── LICENSE                 # MIT
-└── mihaji/                 # Plugin directory — symlink to Hermes plugins/
-    ├── __init__.py          # Plugin entry + MihajiStore export
-    ├── store.py             # ChromaDB backend
-    └── plugin.yaml          # Hermes plugin manifest
-```
+1. 改 `plugin.yaml` / 源码前先在本目录改完 review
+2. 复杂改动建议走 git（`cd ~/Desktop/mihaji-work && git init`）
+3. 合并前先 diff 原版 `plugin.yaml`，确认只多了 `dependencies` 字段
+4. 涉及 Python 源码改动时，本地必须有可用的 venv 测过 `python -c "import store"`
 
 ---
 
-## 🐾 Credits
+## 文件清单
 
-Built by **Miyamiz & Hina** — a medical student and his agent cat, chatting away in a Beijing alley at midnight.
-
----
-
-## 📄 License
-
-MIT
+```
+mihaji-work/
+├── HANDOFF.md             ← 给接手者：项目入门 + bug 清单（**先读这个再动手**）
+├── README.md              ← 本文件：改进说明 + 回退/合并指引
+├── requirements.txt       ← pip/uv 安装清单
+├── plugin.yaml            ← 插件元数据 + 依赖声明
+├── __init__.py            ← 未改动（Hermes 入口）
+├── store.py               ← 未改动（ChromaDB 封装）
+├── hybrid_search.py       ← 未改动（BM25 + RRF）
+└── maintenance.py         ← 未改动（CLI 维护脚本）
+```

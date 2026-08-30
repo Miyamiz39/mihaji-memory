@@ -1,6 +1,20 @@
 name: mihaji
-version: 1.0.0
-description: "Mihaji Memory — ChromaDB 向量记忆插件，中日英多语言语义搜索，带重叠分片的自动记忆管理。"
+version: 1.2.0
+description: "Mihaji Memory — ChromaDB 向量记忆 + BM25 关键词混合检索，RRF 融合排序。中日英多语言语义搜索，带重叠分片的自动记忆管理。"
 hooks:
   - sync_turn
   - on_session_end
+
+# ---------------------------------------------------------------------------
+# 依赖声明 (added 2026-08-30)
+# ---------------------------------------------------------------------------
+# 版本约束基于实测环境 (chromadb 1.5.9 / jieba 0.42.1 / rank-bm25 0.2.2 /
+# sentence-transformers 6.0.0 / pyyaml 6.0.3) 并预留合理上界。
+# 所有约束为软下限 + 谨慎上界，避免下次全新安装时跑不起来。
+# 注：sentence-transformers 会拉 torch>=2.2，请按需选择 CPU/GPU 版。
+dependencies:
+  - chromadb>=1.5.0,<2.0
+  - jieba>=0.42,<1.0
+  - rank_bm25>=0.2.2,<0.3
+  - sentence-transformers>=5.0,<7.0
+  - pyyaml>=6.0

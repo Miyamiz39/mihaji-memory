@@ -1,0 +1,25 @@
+# Mihaji Memory — 运行时依赖
+# 镜像版同步: pip / uv 都用清华源，详见 ~/.config/uv/uv.toml
+
+# 向量数据库 + sentence-transformers 嵌入
+chromadb>=1.5.0,<2.0
+sentence-transformers>=5.0,<7.0
+
+# 中文分词 + BM25 关键词检索（混合检索核心，缺一不可）
+jieba>=0.42,<1.0
+rank_bm25>=0.2.2,<0.3
+
+# YAML 配置解析
+pyyaml>=6.0
+
+# ---------------------------------------------------------------------------
+# 重要提示：
+# 1. sentence-transformers 会拉 torch>=2.2，请按需选择：
+#      - 仅 CPU：pip install torch --index-url https://download.pytorch.org/whl/cpu
+#      - GPU (CUDA 12.x)：pip install torch
+# 2. Hermes 自身要求的版本约束可能与上述冲突——以 Hermes 安装说明为准，
+#    mihaji 运行时仅依赖上述 5 个包的导出 API。
+# 3. 实测环境版本（2026-08-30）：
+#      chromadb 1.5.9 / jieba 0.42.1 / rank-bm25 0.2.2 /
+#      sentence-transformers 6.0.0 / pyyaml 6.0.3
+# ---------------------------------------------------------------------------
