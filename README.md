@@ -1,128 +1,186 @@
-# Mihaji Memory 改进工作区
+﻿# 🐾 Mihaji Memory (米哈唧记忆)
 
-从 Hermes 当前激活的 `mihaji` 插件复制而来的**改进工作副本**。
-原版位置：`~/AppData/Local/hermes/profiles/hina/plugins/mihaji/`
+<p align="center">
+  <img src="https://img.shields.io/badge/version-1.2.0-blue.svg" alt="Version">
+  <img src="https://img.shields.io/badge/platform-Hermes_Agent-purple.svg" alt="Platform">
+  <img src="https://img.shields.io/badge/python-%3E%3D3.10-green.svg" alt="Python">
+  <img src="https://img.shields.io/badge/license-MIT-orange.svg" alt="License">
+</p>
 
----
+<p align="center">
+  <strong>基于 ChromaDB 向量 + BM25 关键词双轨混合检索的 Hermes Agent 原生持久化记忆插件</strong><br>
+  中日英多语言支持 · RRF 融合重排 · A-Res 加权采样 · 上下文自动缝合 · 毫秒级增量缓存 · 零配置开箱即用
+</p>
 
-## ⚠️ 这是工作副本，不是活跃插件
-
-Hermes 加载的是**原版路径**下的插件。本目录改动**不会**自动生效。
-
-任何想回原版/合并的改动，都需要手动复制回去（见底部"回退 / 合并"）。
-
----
-
-## 本次改动（2026-08-30 v1.2.0）
-
-完成了系统性代码审查、致命缺陷修复与第二轮体验进阶优化：
-
-| 文件 | 改动 |
-|---|---|
-| `store.py` | 修复 `recall()` strength 采样 Bug 与离线模型加载；新增 `delete()` 方法；新增 `get_stitched_context()` 上下文缝合；支持 BM25 磁盘缓存与增量追加 |
-| `hybrid_search.py` | 修复 RRF 融合元数据透传；升级 A-Res 加权采样算法；支持 `BM25Index` 增量 `add_documents` / `remove_documents` 与磁盘持久化 |
-| `__init__.py` | 精简 Tool Schema（去除 `add` / `recall` 冗余，聚焦 `search` / `remember` / `delete` / `count`）；`prefetch` 集成上下文缝合 |
-| `maintenance.py` | 修复 import 路径与跨长度桶 Jaccard 去重；增加低强度/陈旧记忆清理支持与 dry-run 仿真 |
-| `plugin.yaml` | 升级版本为 `1.2.0`，补充依赖声明与 Hooks 声明 |
-| `requirements.txt` | 运行时依赖清单（含 torch 版本与镜像提示） |
-| `AGENTS.md` | 项目交接入门 + 历史审计记录 + 修订日志 |
+<p align="center">
+  🇨🇳 <b>中文说明</b> ｜ <a href="README.en.md">🇺🇸 English</a>
+</p>
 
 ---
 
-## 依赖清单与版本约束
+## 🌟 核心特性
 
-| 包 | 约束 | 实测版本 | 用途 |
-|---|---|---|---|
-| `chromadb` | `>=1.5.0,<2.0` | 1.5.9 | 向量数据库 + 持久化 |
-| `jieba` | `>=0.42,<1.0` | 0.42.1 | 中文分词（BM25 前置） |
-| `rank_bm25` | `>=0.2.2,<0.3` | 0.2.2 | BM25 关键词检索 |
-| `sentence-transformers` | `>=5.0,<7.0` | 6.0.0 | 多语言嵌入模型 |
-| `pyyaml` | `>=6.0` | 6.0.3 | config.yaml 解析 |
-
-> **依赖关系不可降级**：`jieba` 和 `rank_bm25` 是 `hybrid_search.py` 的核心 import，
-> 不是可选增强——混合检索（BM25+向量 RRF 融合）是 mihaji 的卖点，不是装饰品。
-
----
-
-## 安装
-
-### 在 Hermes 已有 venv 里装（推荐）
-
-```bash
-cd ~/AppData/Local/hermes
-source venv/Scripts/activate   # Windows Git Bash
-uv pip install -r ~/Desktop/mihaji-work/requirements.txt
-```
-
-### 全新环境
-
-```bash
-# 1. 装 Hermes（参照官方文档）
-# 2. 激活 venv 后执行上面那条命令
-# 3. sentence-transformers 首次会下载模型，
-#    mihaji 默认用的是 paraphrase-multilingual-MiniLM-L12-v2 (~470MB)
-```
-
-### torch 选 CPU 还是 GPU
-
-`sentence-transformers` 会拉 `torch>=2.2`，请按需：
-
-- **仅 CPU**：体积小，启动慢但够用
-  ```bash
-  pip install torch --index-url https://download.pytorch.org/whl/cpu
-  ```
-- **有 NVIDIA GPU**：默认 `pip install torch` 即可（CUDA 版本由 pip 自动选）
+- 🧠 **双轨混合检索 (Hybrid Search + RRF)**：
+  结合 **ChromaDB 多语言稠密向量**（语义联想）与 **Jieba BM25 稀疏关键词**（精准专有名词匹配），通过 **RRF (Reciprocal Rank Fusion)** 无监督融合排序，召回质量兼顾语义与精确命中。
+- ⚡ **两段式自动注入 (Two-Pass Prefetch & A-Res Sampling)**：
+  每轮对话前，底层自动执行两段式检索：**Top-3 精准命中 + Top-2 记忆强度加权采样（A-Res 算法，^2$ 放大）**，既保证关键事实不遗忘，又避免每轮看到机械重复的上下文。
+- 🧵 **上下文前后自动缝合 (Context Chunk Stitching)**：
+  多分块长记忆在检索命中时，自动回溯并无缝拼接相邻的 chunk_idx ± 1 片段，杜绝断句断意。
+- 🚀 **BM25 磁盘缓存与增量更新 (Zero-Lag Indexing)**：
+  分词语料与倒排索引自动持久化为 m25_cache.json；新记忆存入时仅对新块做增量分词追加，彻底消除每轮对话全量扫描带来的 1~2 秒主线程卡顿。
+- 🧹 **主动管理与离线睡眠巩固 (CRUD & Maintenance)**：
+  - Agent 交互工具：emember（主动存储）、search（精准查询）、delete（语义/ID遗忘纠错）、count（条目统计）。
+  - 离线巩固脚本 maintenance.py：超短噪音清洗、跨桶 Jaccard 相似度去重、JSON 全量备份。
+- 🛡️ **极简与克制 (Opinionated Zero-Config)**：
+  固化科学的数学级差与最优超参数，开箱即用，无需用户纠结调参。
 
 ---
 
-## 回退 / 合并到原版
+## 🏗️ 架构与数据流
 
-### 改坏了？回退到原版
+`mermaid
+flowchart TB
+    subgraph AgentLoop ["🤖 Hermes Agent 运行循环"]
+        direction TB
+        UserMsg["👤 用户消息 (User Message)"]
+        
+        subgraph Retrieval ["🔍 检索与提示词注入阶段"]
+            Prefetch["⚡ prefetch(query)"]
+            Hybrid["🧠 Hybrid Search (Vector + BM25)"]
+            RRF["⚖️ RRF 融合排序"]
+            Stitch["🧵 上下文缝合 (chunk ± 1)"]
+            PromptBlock["📋 自动注入系统提示词 (System Prompt)"]
+        end
 
-Hermes 一直在用原版，本目录改了啥都不影响线上。所以——
+        Assistant["✨ LLM 思考与回复"]
 
-- **"线上坏了"**：跟本目录无关，原版没动过；查 hermes 配置或依赖问题
-- **"想看本目录改得对不对"**：在本目录直接 `python -c "import chromadb, jieba, rank_bm25; print('ok')"` 验证
+        subgraph Memorization ["💾 记忆存储阶段"]
+            SyncTurn["📥 sync_turn() 钩子"]
+            Chunker["✂️ 300字切块 (50重叠)"]
+            DB[("🗄️ ChromaDB 向量库")]
+            BM25Cache["⚡ BM25 增量追加 & 磁盘缓存"]
+        end
 
-### 改完了想合并到原版
-
-```bash
-# 1. 先停 Hermes（避免文件占用）
-# 2. 备份原版
-cp -r ~/AppData/Local/hermes/profiles/hina/plugins/mihaji \
-      ~/AppData/Local/hermes/profiles/hina/plugins/mihaji.bak.$(date +%Y%m%d)
-
-# 3. 仅复制改动过的声明文件（推荐，不要无脑覆盖整个目录）
-cp ~/Desktop/mihaji-work/plugin.yaml \
-   ~/AppData/Local/hermes/profiles/hina/plugins/mihaji/plugin.yaml
-
-# 4. requirements.txt 不用合并——它是给人类看的，原版 plugin 目录不需要它
-#    （如果想保留，复制过去也行，无副作用）
-
-# 5. 重启 Hermes
-```
-
----
-
-## 工作流建议
-
-1. 改 `plugin.yaml` / 源码前先在本目录改完 review
-2. 复杂改动建议走 git（`cd ~/Desktop/mihaji-work && git init`）
-3. 合并前先 diff 原版 `plugin.yaml`，确认只多了 `dependencies` 字段
-4. 涉及 Python 源码改动时，本地必须有可用的 venv 测过 `python -c "import store"`
+        UserMsg -->|"对话开始前"| Prefetch
+        Prefetch --> Hybrid --> RRF --> Stitch --> PromptBlock
+        PromptBlock --> Assistant
+        Assistant -->|"对话结束后"| SyncTurn
+        SyncTurn --> Chunker --> DB & BM25Cache
+    end
+`
 
 ---
 
-## 文件清单
+## 🛠️ 工具操作指南 (mihaji_memory)
 
-```
-mihaji-work/
-├── HANDOFF.md             ← 给接手者：项目入门 + bug 清单（**先读这个再动手**）
-├── README.md              ← 本文件：改进说明 + 回退/合并指引
-├── requirements.txt       ← pip/uv 安装清单
-├── plugin.yaml            ← 插件元数据 + 依赖声明
-├── __init__.py            ← 未改动（Hermes 入口）
-├── store.py               ← 未改动（ChromaDB 封装）
-├── hybrid_search.py       ← 未改动（BM25 + RRF）
-└── maintenance.py         ← 未改动（CLI 维护脚本）
-```
+插件会自动为 Hermes Agent 注册 mihaji_memory 工具，LLM 可在需要时主动调用：
+
+| 动作 (Action) | 说明 | 关键参数 | 示例场景 |
+|:---|:---|:---|:---|
+| **search** | 混合检索过往记忆 | query, limit (默认5) | *"搜一下用户之前提到的芒果糯米饭做法"* |
+| **emember** | 主动记录高价值长期记忆 | 	ext, strength (1-100), memory_type, 	ags | *"记住用户换到了上海工作，偏好泰餐"* |
+| **delete** | 主动删除错误/过时的记忆 | query, doc_id 或 group_id | *"删除关于之前旧地址的记忆"* |
+| **count** | 查看当前记忆库总条目数 | 无 | 统计当前记忆容量 |
+
+> 💡 **记忆类型 (memory_type)** 支持：preference（偏好）、knowledge（知识）、event（事件）、	ask（任务）、general（通用）。
+
+---
+
+## 📦 安装与快速开始
+
+### 1. 克隆仓库
+
+`ash
+git clone https://github.com/Miyamiz39/mihaji-memory.git
+cd mihaji-memory
+`
+
+### 2. 软链接至 Hermes 插件目录
+
+`ash
+# 将 mihaji 文件夹软链到 Hermes 的 plugins 目录
+ln -s C:\Users\miyaizu\Desktop\mihaji-work/mihaji ~/.hermes/plugins/mihaji
+# 或 Windows PowerShell:
+# New-Item -ItemType SymbolicLink -Path "C:\Users\miyaizu\AppData\Local\hermes\plugins\mihaji" -Target "C:\Users\miyaizu\Desktop\mihaji-work\mihaji"
+`
+
+### 3. 安装依赖
+
+建议在 Hermes 的 Python 虚拟环境中安装：
+
+`ash
+# 使用 uv (推荐)
+uv pip install -r requirements.txt --python ~/.hermes/hermes-agent/venv/bin/python3
+
+# 或使用 pip (请确保处于 Hermes 的 venv 中)
+pip install -r requirements.txt
+`
+
+> **PyTorch 提示**：sentence-transformers 依赖 PyTorch。如仅使用 CPU，可安装轻量 CPU 版：
+> pip install torch --index-url https://download.pytorch.org/whl/cpu
+
+### 4. 激活插件
+
+在 ~/.hermes/config.yaml 中配置：
+
+`yaml
+memory:
+  provider: mihaji
+
+# 可选配置（留空则自动使用默认值）：
+plugins:
+  mihaji:
+    db_path: "" # 留空默认使用 profile 下的 mihaji_memory 目录
+    model_name: "paraphrase-multilingual-MiniLM-L12-v2"
+`
+
+重启 Hermes 即可生效：
+`ash
+hermes memory status
+`
+
+---
+
+## 🧹 记忆睡眠巩固 (maintenance.py)
+
+项目附带了离线记忆巩固脚本，建议通过 Cron 定期在夜间执行：
+
+`ash
+# 预览清理效果 (不修改数据库)
+python mihaji/maintenance.py --dry-run
+
+# 执行实际清理并自动备份
+python mihaji/maintenance.py --backup-dir ~/memory-backups --min-length 20 --dedup-threshold 0.95
+`
+
+**功能说明**：
+- 过滤 < 20 字符的无效碎语噪音；
+- 基于字符二元 Jaccard 相似度跨桶合并近似重复记忆；
+- 导出 JSON 结构化备份文件；
+- 触发 BM25 索引自动重平衡。
+
+---
+
+## 🗂️ 仓库目录结构
+
+`
+mihaji-memory/
+├── README.md               # 中文文档
+├── README.en.md            # English Documentation
+├── requirements.txt        # 运行时依赖清单
+├── LICENSE                 # MIT License
+├── AGENTS.md               # 架构 handoff 说明与已知问题排查
+└── mihaji/                 # 插件核心代码 (对应 Hermes 插件目录)
+    ├── __init__.py         # MemoryProvider 入口与 Tool Schema
+    ├── store.py            # ChromaDB 存储封装、分块与上下文缝合
+    ├── hybrid_search.py    # BM25 增量索引、RRF 融合与 A-Res 加权采样
+    ├── maintenance.py      # 记忆维护与去重巩固脚本
+    └── plugin.yaml         # Hermes 插件元数据声明
+`
+
+---
+
+## 🐾 致谢与协议
+
+Built with ❤️ by **Miyamiz39 & Hina** (Beijing, 2026).
+本项目遵循 [MIT](LICENSE) 开源协议。
