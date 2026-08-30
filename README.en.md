@@ -110,11 +110,10 @@ memory:
   provider: mihaji
 ```
 
-> [!IMPORTANT]
-> **Pinned Embedding Model & Direct Local Inference Architecture**:
-> - **Standardized Multilingual Model**: Strictly pinned to `paraphrase-multilingual-MiniLM-L12-v2` (118M parameters, supporting 50+ languages with state-of-the-art multilingual semantic alignment).
-> - **Direct Host Inference**: Bypasses ChromaDB's internal blackbox networking. Vectors are computed directly in Python via local disk snapshots (`local_files_only=True`), turning ChromaDB into a 100% offline local vector index.
-> - **Zero-Timeout Guarantee**: Features asynchronous background warmup and instant BM25 fallback (<2ms) on cold start, completely preventing gateway 8.0s timeout drops.
+> [!NOTE]
+> **About the Embedding Model**:
+> Mihaji Memory standardizes on **`paraphrase-multilingual-MiniLM-L12-v2`** (supporting 50+ languages with balanced semantic recall).
+> Model inference is hosted directly in Python for 100% offline local execution, featuring background warmup for a seamless out-of-the-box experience.
 
 Restart Hermes and verify:
 ```bash
