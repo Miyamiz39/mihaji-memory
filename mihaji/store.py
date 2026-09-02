@@ -207,7 +207,8 @@ class MihajiStore:
         Returns:
             Number of chunks stored.
         """
-        self._get_embedding_fn()  # Lazy-load model on first use
+        if not self.is_model_ready():
+            self._load_model_worker()  # Lazy-load embedding model on first use
         try:
             chunks = _chunk_text(text, size=CHUNK_SIZE, overlap=CHUNK_OVERLAP)
 
