@@ -16,6 +16,8 @@
   <a href="README.md">🇨🇳 中文说明</a> ｜ 🇺🇸 <b>English</b>
 </p>
 
+> **Two implementations live in this repo — pick by platform.** This page documents the **Hermes (Python)** implementation (`mihaji/`, default **fp32 PyTorch** embeddings). DSH users should use the sibling **DSH bundle** (`dsh-mihaji/`, default **INT8 q8 ONNX quantized** embeddings, ~113MB file / ~450MB in-process, ≥0.992 agreement with fp32): see [dsh-mihaji/README.md](dsh-mihaji/README.md). Architecture & port decisions: `docs/dsh-port-design.md`.
+
 ---
 
 ## 🌟 Key Features

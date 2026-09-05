@@ -7,6 +7,10 @@
 
 ## 📌 项目概述
 
+> 仓库现有**两个平行实现**：Hermes 版（本指南主体，`mihaji/`）与 DSH 移植版（`dsh-mihaji/`，
+> DeepSeek Harness profile bundle，默认 q8 量化嵌入，含 `session_search`）。DSH 版的开发与维护请读
+> `docs/dsh-port-design.md` 与 `dsh-mihaji/README.md`；本文件其余内容针对 Hermes 版。
+
 `mihaji-memory` 是 [Hermes Agent](https://hermes-agent.nousresearch.com) 的原生 `MemoryProvider` 插件，提供**持久化多语言语义记忆 + 关键词双轨混合检索 + 自动跨会话召回**。
 
 - **GitHub 仓库**：[https://github.com/Miyamiz39/mihaji-memory](https://github.com/Miyamiz39/mihaji-memory)

@@ -18,6 +18,24 @@
 
 ---
 
+## 🧩 两种实现：按你的平台选
+
+本仓库同时维护 **mihaji 的两个实现**，机制同源、各自独立演进：
+
+| | 🐍 Hermes 版（本页） | ⚡ DSH 版（dsh-mihaji） |
+|---|---|---|
+| 平台 | Hermes Agent（Python / ChromaDB + BM25） | DeepSeek Harness profile bundle（Node） |
+| 代码目录 | `mihaji/` | `dsh-mihaji/` |
+| 存储 | ChromaDB 向量库 | JSON 单文件（memory.json）+ 关键词/向量混合检索 |
+| **默认嵌入模型** | fp32 PyTorch（SentenceTransformer） | **INT8 q8 ONNX 量化**（transformers.js，文件 ~113MB、进程内 ~450MB） |
+| 安装 / 文档 | 按本页下方说明 | [dsh-mihaji/README.md](dsh-mihaji/README.md) |
+
+- **用 DSH 的选 dsh-mihaji**：默认已用 q8 量化版，内存比 fp32 省一半以上，精度实测与 fp32 一致性 ≥0.992，旧 fp32 向量无需重嵌。
+- **用 Hermes 的选本页版本**：默认 fp32 多语言模型（PyTorch 栈，不直接复用 ONNX q8；需要低内存可自行走 optimum/onnxruntime 路线）。
+- DSH 移植的架构与决策记录见 `docs/dsh-port-design.md`。
+
+---
+
 ## 🌟 核心特性
 
 - 🧠 **双轨混合检索 (Hybrid Search + RRF)**：
@@ -139,6 +157,7 @@ plugins:
 > **关于嵌入模型（Embedding Model）**：
 > 本插件为多语言跨会话记忆量身设计，固化选用 **`paraphrase-multilingual-MiniLM-L12-v2`**（原生支持中、日、英等 50+ 种语言）。
 > 模型推理直接由应用层托管，纯本地离线运行（首次自动通过高速镜像拉取），并配备后台静默预热机制，开箱即用，无需额外配置。
+> 本版为 **fp32 PyTorch** 加载；同一模型的 **INT8 q8（ONNX）量化默认版**见 DSH 实现（`dsh-mihaji/`），两版产出向量可互认。
 
 重启 Hermes 即可生效：
 ```bash
