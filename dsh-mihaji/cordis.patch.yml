@@ -1,0 +1,17 @@
+# ============================================================================
+# dsh-mihaji —— DSH bundle patch（挂载声明）
+# ============================================================================
+# 用法（在 web profile 安装）：不要用 link:（link 会指向仓库源码，Node 按
+# realpath 在 Projects 下解析不到 @deepseek-ai，profile 启动时报
+# ERR_MODULE_NOT_FOUND）。改为打包成 tarball 后真实安装，源码才会物理落在
+# profiles\web\node_modules\dsh-mihaji 内（其真实路径向上能命中
+# profiles\node_modules\@deepseek-ai）。改动 bundle 源码后重打包再重装：
+#   cd <repo>\dsh-mihaji && npm pack --pack-destination .
+#   dsh plugin --profile web add <repo>\dsh-mihaji\dsh-mihaji-0.1.0.tgz
+# 装完重启 dsh web，再 F5 刷新。移除：
+#   dsh plugin --profile web rm dsh-mihaji
+# ============================================================================
+
+- insert:
+    - id: dsh-mihaji
+      name: dsh-mihaji

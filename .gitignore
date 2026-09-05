@@ -1,4 +1,4 @@
-﻿# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
 *.class
@@ -21,3 +21,13 @@ Thumbs.db
 # Logs & testing
 *.log
 .pytest_cache/
+
+# DSH port (dsh-mihaji bundle)
+dsh-mihaji/*.tgz
+dsh-mihaji/node_modules/
+dsh-mihaji/package-lock.json
+
+# DSH port PoC sandbox — keep the scripts, drop heavy/generated artifacts
+poc-embed/node_modules/
+poc-embed/q8model/
+poc-embed/*-vecs.json

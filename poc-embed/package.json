@@ -1,0 +1,1 @@
+{"name":"poc-embed","private":true,"type":"module","dependencies":{"@huggingface/transformers":"^4.2.0","onnxruntime-node":"^1.29.0"}}
