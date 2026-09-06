@@ -1,6 +1,6 @@
 {
   "name": "dsh-mihaji",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "description": "Mihaji Memory — DSH profile bundle. 语义记忆：本地 q8 嵌入 + 关键词混合检索 + 每步自动召回注入 + mihaji_memory 工具 + session_search 会话检索 + JSON 持久化。",
   "keywords": [
     "dsh",

@@ -246,6 +246,22 @@ function apply(ctx) {
   const store = createStore({ trace })
   trace(`apply: bundle mounted (${name}); existing chunks=${store.count()}; embedReady=${store.isEmbedReady()}`)
 
+  // ---- preset gating: auto-recall + auto-memorize run only for `hina` sessions ----
+  // The mihaji tools stay available to every agent (manual search/remember), but the
+  // passive coupling (per-step recall injection + auto-store of user turns) is scoped
+  // to the `hina` preset. The current preset is read from each session's `agentPreset`
+  // projection (registered by dsh-agent-presets; folded from header + selection events).
+  const sessionProjections = ctx.get('sessionProjections')
+  const presetOf = (agent) => {
+    try {
+      if (!agent || !agent.session) return null
+      if (!sessionProjections || typeof sessionProjections.stateOf !== 'function') return null
+      return sessionProjections.stateOf(agent.session, 'agentPreset') ?? null
+    } catch { return null }
+  }
+  const isHina = (agent) => presetOf(agent) === 'hina'
+  trace('preset gate: auto recall/auto-store limited to preset=hina')
+
   // ---- global tool ----
   try {
     ctx.tools.register(buildMemoryTool(store, trace))
@@ -275,9 +291,21 @@ function apply(ctx) {
       systemPrompt.section({
         name: 'mihaji:memory',
         order: 100000,
-        text: () => {
+        text: (sectionCtx) => {
           const n = store.count()
           const embed = store.isEmbedReady()
+          const agent = sectionCtx && sectionCtx.agent
+          // Auto-recall injection only happens for `hina` sessions; for other presets
+          // show a weakened note (tools are still available for manual use).
+          if (agent && !isHina(agent)) {
+            const weakHead = n === 0
+              ? '# Mihaji 记忆库 🐾\n记忆库还是空的。'
+              : `# Mihaji 记忆库 🐾\n已存 ${n} 条记忆片段。`
+            return `${weakHead}\n` +
+              (embed ? '' : '(语义模型仍在加载，当前为关键词召回)\n') +
+              '本会话(preset)不自动召回/自动记忆；如需要可手动用 `mihaji_memory`（search/remember/delete/count）' +
+              '或 `session_search`（翻查过往会话）检索或记录。'
+          }
           const head = n === 0
             ? '# Mihaji 记忆库 🐾\n记忆库还是空的。'
             : `# Mihaji 记忆库 🐾\n已存 ${n} 条记忆片段。`
@@ -309,6 +337,9 @@ function apply(ctx) {
       try {
         const decision = await next()
         if (!decision || decision.kind !== 'enter') return decision
+        // Auto-recall + auto-memorize are scoped to the `hina` preset only.
+        // Other presets keep the manual tools but get no passive coupling.
+        if (!isHina(agent)) return decision
         const stepIsFirst = step === undefined || step <= 1
 
         // auto-memorize genuine user turns on the first step of a turn
