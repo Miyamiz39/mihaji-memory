@@ -99,12 +99,12 @@ export function shouldPruneZeroStrength(row, nowMs = Date.now()) {
   const strength = Number(row.strength)
   if (!Number.isFinite(strength) || strength > 0) return false
 
-  const createdAt = String(row.createdAt || '').trim()
-  if (!createdAt) return false
-  const createdMs = Date.parse(createdAt.replace(' ', 'T'))
-  if (!Number.isFinite(createdMs)) return false
+  const zeroStrengthAt = String(row.zeroStrengthAt || '').trim()
+  if (!zeroStrengthAt) return false
+  const zeroStrengthMs = Date.parse(zeroStrengthAt.replace(' ', 'T'))
+  if (!Number.isFinite(zeroStrengthMs)) return false
 
-  return nowMs - createdMs >= ZERO_STRENGTH_GRACE_MS
+  return nowMs - zeroStrengthMs >= ZERO_STRENGTH_GRACE_MS
 }
 
 function persist(data) {
@@ -139,6 +139,7 @@ export function createStore({ trace = () => {} } = {}) {
   let groups = new Map()
 
   function load() {
+    let marked = 0
     let pruned = 0
     try {
       const raw = fs.readFileSync(storeFile(), 'utf8')
@@ -148,11 +149,23 @@ export function createStore({ trace = () => {} } = {}) {
       rows = []
     }
 
+    // Legacy rows do not record when they first reached zero. Stamp them now so
+    // the grace period starts at this launch rather than at the memory's original
+    // creation time (which may be months earlier).
+    const zeroStrengthAt = nowStamp()
+    for (const row of rows) {
+      const strength = Number(row?.strength)
+      if (Number.isFinite(strength) && strength <= 0 && !row.zeroStrengthAt) {
+        row.zeroStrengthAt = zeroStrengthAt
+        marked++
+      }
+    }
+
     const loadedCount = rows.length
     const nowMs = Date.now()
     rows = rows.filter((row) => !shouldPruneZeroStrength(row, nowMs))
     pruned = loadedCount - rows.length
-    if (pruned > 0) {
+    if (marked > 0 || pruned > 0) {
       try {
         persist({ version: 2, rows })
       } catch (err) {
@@ -161,7 +174,7 @@ export function createStore({ trace = () => {} } = {}) {
     }
 
     rebuildGroups()
-    trace(`store: loaded ${rows.length} chunks from ${storeFile()}${pruned ? `; pruned ${pruned} expired zero-strength chunks` : ''}`)
+    trace(`store: loaded ${rows.length} chunks from ${storeFile()}${marked ? `; marked ${marked} zero-strength chunks` : ''}${pruned ? `; pruned ${pruned} expired zero-strength chunks` : ''}`)
   }
   function rebuildGroups() {
     groups = new Map()
