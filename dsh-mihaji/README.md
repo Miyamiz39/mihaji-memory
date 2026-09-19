@@ -7,6 +7,7 @@
 - **本地 q8 量化嵌入**：transformers.js 离线加载 MiniLM（INT8，进程内 ~450MB，精度与 fp32 一致性 ≥0.992），模型文件首次自动从 HuggingFace 缓存准备、失败自动回退 fp32
 - **每步自动召回**：按当前输入注入相关记忆（`## 相关回忆 🐾`），快照去重、claimed 过滤不自存
 - **自动记忆**：真实用户消息经噪音过滤后自动入库（strength=20）
+- **启动清理**：插件启动加载记忆库时 自动删除已保持 `strength <= 0` 至少 7 天的记忆；不启后台定时器 缺失或非法时间戳不删
 - **`mihaji_memory` 工具**：search / remember / delete / count
 - **`session_search` 工具**（v0.6.0）：翻查 DSH 会话历史，四形态 browse / discover(query) / read(session_id) / scroll(session_id+around_seq)，调用约定对齐 Hermes `session_search_tool.py`
 

@@ -88,6 +88,25 @@ function nowStamp() {
   return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}:${p(d.getSeconds())}`
 }
 
+// strength <= 0 is a tombstone, not an immediate hard-delete. Keep it for a
+// short grace period so a bad decay/migration can still be recovered manually;
+// expired tombstones are swept once when the plugin starts.
+export const ZERO_STRENGTH_GRACE_DAYS = 7
+const ZERO_STRENGTH_GRACE_MS = ZERO_STRENGTH_GRACE_DAYS * 24 * 60 * 60 * 1000
+
+export function shouldPruneZeroStrength(row, nowMs = Date.now()) {
+  if (!row || row.strength == null) return false
+  const strength = Number(row.strength)
+  if (!Number.isFinite(strength) || strength > 0) return false
+
+  const createdAt = String(row.createdAt || '').trim()
+  if (!createdAt) return false
+  const createdMs = Date.parse(createdAt.replace(' ', 'T'))
+  if (!Number.isFinite(createdMs)) return false
+
+  return nowMs - createdMs >= ZERO_STRENGTH_GRACE_MS
+}
+
 function persist(data) {
   const dir = storeDir()
   fs.mkdirSync(dir, { recursive: true })
@@ -120,6 +139,7 @@ export function createStore({ trace = () => {} } = {}) {
   let groups = new Map()
 
   function load() {
+    let pruned = 0
     try {
       const raw = fs.readFileSync(storeFile(), 'utf8')
       const data = JSON.parse(raw)
@@ -127,8 +147,21 @@ export function createStore({ trace = () => {} } = {}) {
     } catch {
       rows = []
     }
+
+    const loadedCount = rows.length
+    const nowMs = Date.now()
+    rows = rows.filter((row) => !shouldPruneZeroStrength(row, nowMs))
+    pruned = loadedCount - rows.length
+    if (pruned > 0) {
+      try {
+        persist({ version: 2, rows })
+      } catch (err) {
+        trace(`store: failed to persist startup prune: ${err?.message || err}`)
+      }
+    }
+
     rebuildGroups()
-    trace(`store: loaded ${rows.length} chunks from ${storeFile()}`)
+    trace(`store: loaded ${rows.length} chunks from ${storeFile()}${pruned ? `; pruned ${pruned} expired zero-strength chunks` : ''}`)
   }
   function rebuildGroups() {
     groups = new Map()
