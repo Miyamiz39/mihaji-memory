@@ -20,7 +20,7 @@
 
 | mihaji (Hermes) | 作用 | DSH 等价机制 | 状态 |
 |---|---|---|---|
-| `register_memory_provider` | 注册全局记忆 Provider | profile **host 服务**（bundle 插件注入，跨会话共享库句柄） | ✅ 已实现（apply 挂载全局工具/提示词） |
+| `register_memory_provider` | 注册记忆 Provider | `hina` agent preset 中的 bundle 插件行 | ✅ 已实现（工具/提示词/事件均落在 hina standing scope） |
 | `sync_turn` | 每轮后自动存 user 消息 | pre-step 抓 claimed 真实用户消息入库（§4.3） | ✅ 已实现 |
 | `prefetch(query)` | 每步按当前输入检索并注入 | **`agent/pre-step` waterfall + `agent.ctx`**（§2） | ✅ 已实现 |
 | `system_prompt_block()` | 提示词说明记忆库用法 | `systemPrompt.section()` | ✅ 已实现（order 100000） |
@@ -46,18 +46,14 @@ waterfall "agent/pre-step"(payload.messages = 当前 step 用户消息) → deci
   `@deepseek-ai/dsh-llm` 的 `createUserMessage`。→ **正式实现必须是真实 profile bundle**（能 import DSH 包），
   不能靠动态插件手拼消息对象。
 
-### 关键实证：agent/pre-step 是 scope 过滤的 waterfall，host 收不到，须挂 agent.ctx
+### 关键实证：agent/pre-step 是 scope 过滤的 waterfall
 
-注入链路经实机验证后锁定（`docs/dsh-port-design.md` 章节记录运行诊断）：
-- **`agent/pre-step` 是 waterfall 事件，只派发给注册 ctx 携带该 agent scope 标签的 listener**。一个 untagged
-  的 host/profile 行（即使 `{ global: true }`）**收不到** pre-step（实测：apply 挂载成功、但一次都不触发）。
-- 相反，**emit 事件**（`agent/session-start`、`agent/status`、`session/event`）能到达 untagged host 行。
-- 所以正确做法：host bundle 里 **扫描/监听 live agent**（`ctx.agents.list()` + `ctx.on('agent/created')` +
-  `ctx.on('agent/session-start')`，均为 host 可达的 emit），对每个 agent 在 **`agent.ctx`**（其 scope 标签即该
-  agent）上 `agent.ctx.on('agent/pre-step', handler)` —— 这才符合 pre-step 的 scope 准入。这是 DSH per-agent
-  插件的标准机制（`dsh-time-context`、`dsh-file-reference-local` 同款）。
-- 时序：恢复已有会话时 agent 可能晚于 host bundle apply 才出现 → 需 `list()` 立即扫 + `agent/created` 兜新 +
-  短延迟重扫（800ms/3s）。
+- **`agent/pre-step` 是 waterfall 事件，只派发给注册 ctx 位于该 agent scope 链上的 listener**。untagged
+  Host/Profile 行收不到它。
+- Mihaji 现在由 `hina` preset 的 standing scope 直接挂载，因此可以在插件自己的 `ctx` 上注册
+  `ctx.on('agent/pre-step', handler)`；加入 hina 的 agent 会继承该 listener，而其他 preset 不在这条 scope 链上。
+- 由作用域完成隔离后，不再需要扫描 live agent、监听 `agent/created`/`agent/session-start`，也不需要根据
+  `agentPreset` 投影做运行时名称门控。
 - **安装必须是物理 tarball，不能 `link:`**：`link:` 在 `web\node_modules` 只放符号链接，Node 按 realpath 回
   仓库源码目录解析不到 `@deepseek-ai`（它在 `profiles\node_modules\@deepseek-ai` 以 junction 形式存在）。物理
   解压在 `web\node_modules\dsh-mihaji` 内即可向上命中。
@@ -79,9 +75,10 @@ waterfall "agent/pre-step"(payload.messages = 当前 step 用户消息) → deci
   │   └── index.js          # export { name, inject, apply }
   └── README.md
   ```
-- 安装：物理 tarball 安装（不能 `link:`，原因见 §2）。小改版用 §2 的 package.json + `pnpm install` 路径。
+- 安装：物理 tarball 作为 Profile dependency 安装（不能 `link:`，原因见 §2），但不要加入
+  `dsh.profile.bundles`；在 `~/.dsh/.agent-presets/hina/agent.cordis.yml` 中添加 `name: dsh-mihaji` 插件行。
   装完重启 `dsh web`（重启由用户手动执行并验收）。
-- 移除：从 `web/package.json` 删掉依赖与 bundles 条目后 `pnpm install`（等价于 `dsh plugin rm`，且不残留引用）。
+- 移除：先从 hina preset 删除插件行，再从 Profile dependencies 删除包并安装依赖。
 
 ## 4. 功能切片（分步）
 
@@ -131,11 +128,10 @@ q8 进程内是终态。真实 dsh web 整进程（含全部 harness）RSS ≈ 6
 
 ### 已完成（全部经真机验收，用户重启 `dsh web` 确认）
 
-- [x] §4.1 注入链路 —— host 扫 agent（list + agent/created + session-start + 800ms/3s 重扫）→ `agent.ctx`
-      挂 pre-step → 注入 plugin UserMessage，快照去重、claimed 过滤不自存。验收：消息顶部持续出现
-      `## 相关回忆 🐾` 注入块（hits=5）。
+- [x] §4.1 注入链路 —— hina preset standing scope 直接挂 `agent/pre-step` → 注入 plugin UserMessage，
+      快照去重、claimed 过滤不自存；无需 host 扫描或 preset-id 门控。
 - [x] §4.2 工具 —— `mihaji_memory`（search/remember/delete/count + recall/add/forget 兼容别名；
-      strength 1–100 默认 70，memory_type/tags）经 `ctx.tools.register` 全局注册，全 agent 可见。
+      strength 1–100 默认 70，memory_type/tags）经 preset-scoped `ctx.tools.register` 注册，仅 hina 可见。
 - [x] §4.3 自动记忆 —— pre-step 抓 claimed 真实用户消息 → 噪音过滤（长度/垃圾前缀/框架帧/元对话）
       → 入库 strength=20；auto-store 自身召回不回流。
 - [x] §4.4 提示词 —— `systemPrompt.section('mihaji:memory', order=100000)` 说明记忆库与工具用法。

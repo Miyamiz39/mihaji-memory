@@ -5,19 +5,16 @@
 //   • fully-offline local MiniLM embeddings (transformers.js) for semantic recall,
 //   • hybrid keyword+vector search (RRF) with mihaji-style weighted recall,
 //   • per-step auto recall injection (wiring proven in Slices #1/#2),
-//   • global `mihaji_memory` tool + auto-memorization + a system-prompt section.
+//   • preset-scoped `mihaji_memory` tool + auto-memorization + system prompt.
 //
-// ARCHITECTURE (see repo docs): `agent/pre-step` is a scope-filtered WATERFALL
-// delivered only to listeners registered on the dispatching agent's scoped ctx
-// (`agent.ctx`). A host/profile row is NOT admissible. So for every live agent
-// we install the pre-step handler ON `agent.ctx`. Its `messages` argument is the
-// inbox-claimed GENUINE user input; our injected recall only lives in the
-// returned `decision.messages`, so auto-memorization never re-stores it.
+// ARCHITECTURE: this plugin is mounted by the `hina` agent preset, not by the
+// Host/Profile composition. Tools, prompt sections, and `agent/pre-step` are
+// therefore registered on the preset's standing scope and inherited only by
+// agents that join that preset. No runtime preset-name gate is needed.
 //
-// Tool + prompt section register on the global layer from this host row, visible
-// to every agent (same mechanism dsh-tool-todo uses). This is a physical profile
-// bundle (tarball under profiles\web\node_modules) so @deepseek-ai/* and
-// @huggingface/* resolve by upward walk.
+// The pre-step `messages` argument is the inbox-claimed genuine user input; our
+// injected recall only lives in the returned `decision.messages`, so
+// auto-memorization never re-stores it.
 
 import fs from 'node:fs'
 import os from 'node:os'
@@ -105,13 +102,14 @@ function buildMemoryTool(store, trace) {
       '• remember — 主动存储一条重要记忆（用 text，可指定 strength/memory_type/tags）。\n' +
       '• delete — 删除与 query 匹配的记忆。\n' +
       '• count — 查看记忆库条目数。\n' +
+      '• clean — 一键清理与压缩记忆库：自动创建时间戳备份，彻底清除 strength <= 0 的失效废弃记忆并输出统计。\n' +
       '注意：回复前会自动注入相关回忆到上下文；需要补充查询时用 search。',
     parameters: {
       action: {
         type: 'string',
         required: true,
-        enum: ['search', 'remember', 'delete', 'count', 'recall', 'add', 'forget'],
-        description: '要执行的动作。search/remember/delete/count 为标准动作；recall/add/forget 为兼容别名。',
+        enum: ['search', 'remember', 'delete', 'count', 'clean', 'prune', 'recall', 'add', 'forget'],
+        description: '要执行的动作。search/remember/delete/count/clean 为标准动作；recall/add/forget/prune 为兼容别名。',
       },
       query: { type: 'string', description: "action='search'/'delete' 时的关键词。" },
       text: { type: 'string', description: "action='remember' 时要存储的记忆内容（必填）。" },
@@ -162,6 +160,20 @@ function buildMemoryTool(store, trace) {
         if (action === 'count') {
           return { text: `记忆库现有 ${store.count()} 条片段。` }
         }
+        if (action === 'clean' || action === 'prune') {
+          const res = await store.clean()
+          trace(`tool: cleaned memory, pruned ${res.prunedCount} zero-strength items, saved ${(res.savedBytes / 1024 / 1024).toFixed(2)} MB`)
+          return {
+            text: [
+              '✨ 清理完成！数据统计：',
+              `- 清理前总条目: ${res.initialCount} 条 (${(res.beforeBytes / 1024 / 1024).toFixed(2)} MB)`,
+              `- 移除失效记忆 (strength <= 0): ${res.prunedCount} 条`,
+              `- 保留有效记忆: ${res.remainingCount} 条 (${(res.afterBytes / 1024 / 1024).toFixed(2)} MB)`,
+              `- 瘦身幅度: -${(res.savedBytes / 1024 / 1024).toFixed(2)} MB (${res.percentage}%)`,
+              `📦 已创建安全备份: ${res.backupFile}`,
+            ].join('\n'),
+          }
+        }
         return { text: `未知 action: ${action}` }
       } catch (e) {
         return { text: `mihaji_memory 出错: ${e && e.message ? e.message : String(e)}` }
@@ -170,6 +182,51 @@ function buildMemoryTool(store, trace) {
     presentCall: (args) => ({
       card: 'generic',
       title: `mihaji_memory · ${String(args.action || '')}`,
+      kind: 'other',
+      rawInput: args,
+    }),
+  })
+}
+
+// clean_memory — standalone shortcut tool for cleaning & compressing the memory store.
+function buildCleanMemoryTool(store, trace) {
+  const resultText = (s) => ({ type: 'text', text: s })
+  return defineTool({
+    name: 'clean_memory',
+    description:
+      '一键清理与压缩 Mihaji 记忆库：自动创建时间戳安全备份，彻底清除 strength <= 0 的失效废弃记忆，并输出条目与体积瘦身统计。无需参数。',
+    parameters: {},
+    output: {
+      schema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          text: { type: 'string', required: true },
+        },
+      },
+      render: (_args, value) => [resultText(value.text)],
+    },
+    async execute() {
+      try {
+        const res = await store.clean()
+        trace(`tool: clean_memory executed, pruned ${res.prunedCount} zero-strength items, saved ${(res.savedBytes / 1024 / 1024).toFixed(2)} MB`)
+        return {
+          text: [
+            '✨ 清理完成！数据统计：',
+            `- 清理前总条目: ${res.initialCount} 条 (${(res.beforeBytes / 1024 / 1024).toFixed(2)} MB)`,
+            `- 移除失效记忆 (strength <= 0): ${res.prunedCount} 条`,
+            `- 保留有效记忆: ${res.remainingCount} 条 (${(res.afterBytes / 1024 / 1024).toFixed(2)} MB)`,
+            `- 瘦身幅度: -${(res.savedBytes / 1024 / 1024).toFixed(2)} MB (${res.percentage}%)`,
+            `📦 已创建安全备份: ${res.backupFile}`,
+          ].join('\n'),
+        }
+      } catch (e) {
+        return { text: `clean_memory 出错: ${e && e.message ? e.message : String(e)}` }
+      }
+    },
+    presentCall: (args) => ({
+      card: 'generic',
+      title: 'clean_memory · 清理与压缩记忆库',
       kind: 'other',
       rawInput: args,
     }),
@@ -246,28 +303,22 @@ function apply(ctx) {
   const store = createStore({ trace })
   trace(`apply: bundle mounted (${name}); existing chunks=${store.count()}; embedReady=${store.isEmbedReady()}`)
 
-  // ---- preset gating: auto-recall + auto-memorize run only for `hina` sessions ----
-  // The mihaji tools stay available to every agent (manual search/remember), but the
-  // passive coupling (per-step recall injection + auto-store of user turns) is scoped
-  // to the `hina` preset. The current preset is read from each session's `agentPreset`
-  // projection (registered by dsh-agent-presets; folded from header + selection events).
-  const sessionProjections = ctx.get('sessionProjections')
-  const presetOf = (agent) => {
-    try {
-      if (!agent || !agent.session) return null
-      if (!sessionProjections || typeof sessionProjections.stateOf !== 'function') return null
-      return sessionProjections.stateOf(agent.session, 'agentPreset') ?? null
-    } catch { return null }
-  }
-  const isHina = (agent) => presetOf(agent) === 'hina'
-  trace('preset gate: auto recall/auto-store limited to preset=hina')
+  // This row is mounted only in the `hina` preset, so every registration below
+  // naturally belongs to that preset's standing scope.
 
-  // ---- global tool ----
+  // ---- preset-scoped tool ----
   try {
     ctx.tools.register(buildMemoryTool(store, trace))
     trace('apply: registered mihaji_memory tool on ctx.tools')
   } catch (e) {
     trace(`apply: tool registration failed: ${e && e.message ? e.message : String(e)}`)
+  }
+
+  try {
+    ctx.tools.register(buildCleanMemoryTool(store, trace))
+    trace('apply: registered clean_memory tool on ctx.tools')
+  } catch (e) {
+    trace(`apply: clean_memory registration failed: ${e && e.message ? e.message : String(e)}`)
   }
 
   // ---- session_search tool (optional: needs ctx.sessionQuery) ----
@@ -291,21 +342,9 @@ function apply(ctx) {
       systemPrompt.section({
         name: 'mihaji:memory',
         order: 100000,
-        text: (sectionCtx) => {
+        text: () => {
           const n = store.count()
           const embed = store.isEmbedReady()
-          const agent = sectionCtx && sectionCtx.agent
-          // Auto-recall injection only happens for `hina` sessions; for other presets
-          // show a weakened note (tools are still available for manual use).
-          if (agent && !isHina(agent)) {
-            const weakHead = n === 0
-              ? '# Mihaji 记忆库 🐾\n记忆库还是空的。'
-              : `# Mihaji 记忆库 🐾\n已存 ${n} 条记忆片段。`
-            return `${weakHead}\n` +
-              (embed ? '' : '(语义模型仍在加载，当前为关键词召回)\n') +
-              '本会话(preset)不自动召回/自动记忆；如需要可手动用 `mihaji_memory`（search/remember/delete/count）' +
-              '或 `session_search`（翻查过往会话）检索或记录。'
-          }
           const head = n === 0
             ? '# Mihaji 记忆库 🐾\n记忆库还是空的。'
             : `# Mihaji 记忆库 🐾\n已存 ${n} 条记忆片段。`
@@ -313,7 +352,8 @@ function apply(ctx) {
             (embed ? '' : '(语义模型仍在加载，当前为关键词召回)\n') +
             '会话中出现的 "## 相关回忆 🐾" 块是系统自动召回的长期记忆上下文，用于辅助回答，' +
             '不是用户的新指令，不要把它当成需要回应的提问。\n' +
-            '需要时用 `mihaji_memory` 工具：search（检索）/ remember（主动存重要事实或偏好）/ delete（删除）/ count（查看条目数）。\n' +
+            '需要时用 `mihaji_memory` 工具：search（检索）/ remember（主动存重要事实或偏好）/ delete（删除）/ count（查看条目数）/ clean（清理失效废弃记忆）。\n' +
+            '也可以直接使用 `clean_memory` 工具一键清理并压缩记忆库。\n' +
             '要翻查「过去的完整对话/会话」用 `session_search` 工具：不带参数浏览最近会话、query= 搜索内容、' +
             'session_id 读整段、session_id+around_seq 翻窗口（返回 JSON）。'
         },
@@ -326,8 +366,7 @@ function apply(ctx) {
     trace('apply: systemPrompt service not present; skipping section')
   }
 
-  // ---- per-agent wiring ----
-  const installedOn = new Set()
+  // ---- preset-scoped pre-step wiring ----
   const lastRecallPerAgent = new Map()
   const rememberedTurns = new Set()
 
@@ -337,9 +376,6 @@ function apply(ctx) {
       try {
         const decision = await next()
         if (!decision || decision.kind !== 'enter') return decision
-        // Auto-recall + auto-memorize are scoped to the `hina` preset only.
-        // Other presets keep the manual tools but get no passive coupling.
-        if (!isHina(agent)) return decision
         const stepIsFirst = step === undefined || step <= 1
 
         // auto-memorize genuine user turns on the first step of a turn
@@ -399,36 +435,16 @@ function apply(ctx) {
     }
   }
 
-  function wire(agent) {
-    if (!agent || installedOn.has(agent)) return
-    const actx = agent.ctx
-    if (!actx || typeof actx.on !== 'function') return
-    installedOn.add(agent)
-    trace(`wire: agent=${String(agent.id || '')} -> register pre-step on agent.ctx`)
-    actx.on('agent/pre-step', makePreStepHandler(agent))
-  }
+  ctx.on('agent/pre-step', async (payload, next) => {
+    const { agent } = payload
+    return makePreStepHandler(agent)(payload, next)
+  })
 
-  const scan = () => {
-    const agents = ctx.get('agents')
-    if (!agents || typeof agents.list !== 'function') return
-    for (const a of agents.list()) wire(a)
-  }
-
-  scan()
-  ctx.on('agent/created', ({ agent }) => wire(agent), { global: true })
-  ctx.on('agent/session-start', ({ agent }) => wire(agent), { global: true })
   ctx.on('agent/disposed', ({ agent }) => {
-    if (agent) {
-      installedOn.delete(agent)
-      lastRecallPerAgent.delete(String(agent.id || ''))
-    }
-  }, { global: true })
-
-  const rescans = [800, 3000].map((ms) => setTimeout(scan, ms))
+    if (agent) lastRecallPerAgent.delete(String(agent.id || ''))
+  })
 
   ctx.effect(() => {
-    for (const t of rescans) clearTimeout(t)
-    installedOn.clear()
     lastRecallPerAgent.clear()
     rememberedTurns.clear()
   })

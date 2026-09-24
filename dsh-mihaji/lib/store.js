@@ -374,6 +374,55 @@ export function createStore({ trace = () => {} } = {}) {
       save()
       return n
     },
+
+    async clean() {
+      const dir = storeDir()
+      const file = storeFile()
+      let raw = ''
+      try {
+        raw = fs.readFileSync(file, 'utf8')
+      } catch {
+        raw = JSON.stringify({ version: 2, rows })
+      }
+      const beforeBytes = Buffer.byteLength(raw, 'utf8')
+      const initialCount = rows.length
+
+      // 1. 创建备份
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-')
+      const backupFile = path.join(dir, `memory.backup-${timestamp}.json`)
+      fs.writeFileSync(backupFile, raw, 'utf8')
+
+      // 2. 过滤掉 strength <= 0 的失效废弃记忆
+      const validRows = rows.filter((r) => {
+        const s = Number(r.strength)
+        return !Number.isNaN(s) && s > 0
+      })
+      const prunedCount = initialCount - validRows.length
+      rows = validRows
+      rebuildGroups()
+      save()
+
+      let afterRaw = ''
+      try {
+        afterRaw = fs.readFileSync(file, 'utf8')
+      } catch {
+        afterRaw = JSON.stringify({ version: 2, rows })
+      }
+      const afterBytes = Buffer.byteLength(afterRaw, 'utf8')
+      const savedBytes = Math.max(0, beforeBytes - afterBytes)
+      const pct = beforeBytes > 0 ? Math.round((savedBytes / beforeBytes) * 100) : 0
+
+      return {
+        initialCount,
+        prunedCount,
+        remainingCount: validRows.length,
+        beforeBytes,
+        afterBytes,
+        savedBytes,
+        percentage: pct,
+        backupFile: path.basename(backupFile),
+      }
+    },
   }
   store.scheduleBackfill = scheduleBackfill
   return store
